@@ -3,7 +3,6 @@
 -- Date: [12/05/2025]
 
 -- Create database
-DROP DATABASE IF EXISTS library_management;
 CREATE DATABASE library_management;
 USE library_management;
 
@@ -177,6 +176,3 @@ BEGIN
     END IF;
 END//
 DELIMITER ;
-
--- Sample data insertion (optional)
--- INSERT INTO publishers, authors, categories, etc.
