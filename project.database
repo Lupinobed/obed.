@@ -1,1 +1,182 @@
-h
+-- Library Management System Database
+-- Created by [obed magori ]
+-- Date: [12/05/2025]
+
+-- Create database
+DROP DATABASE IF EXISTS library_management;
+CREATE DATABASE library_management;
+USE library_management;
+
+-- 1. MEMBERS TABLE
+CREATE TABLE members (
+    member_id INT AUTO_INCREMENT PRIMARY KEY,
+    first_name VARCHAR(50) NOT NULL,
+    last_name VARCHAR(50) NOT NULL,
+    email VARCHAR(100) UNIQUE NOT NULL,
+    phone VARCHAR(20),
+    address TEXT,
+    membership_date DATE NOT NULL,
+    membership_expiry DATE NOT NULL,
+    status ENUM('Active', 'Inactive', 'Suspended') DEFAULT 'Active',
+    CONSTRAINT chk_expiry CHECK (membership_expiry > membership_date)
+);
+
+-- 2. AUTHORS TABLE
+CREATE TABLE authors (
+    author_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    biography TEXT,
+    nationality VARCHAR(50),
+    birth_date DATE,
+    death_date DATE,
+    CONSTRAINT chk_dates CHECK (death_date IS NULL OR birth_date < death_date)
+);
+
+-- 3. PUBLISHERS TABLE
+CREATE TABLE publishers (
+    publisher_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    address TEXT,
+    contact_email VARCHAR(100),
+    contact_phone VARCHAR(20),
+    website VARCHAR(255)
+);
+
+-- 4. BOOK_CATEGORIES TABLE
+CREATE TABLE book_categories (
+    category_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(50) UNIQUE NOT NULL,
+    description TEXT
+);
+
+-- 5. BOOKS TABLE
+CREATE TABLE books (
+    book_id INT AUTO_INCREMENT PRIMARY KEY,
+    isbn VARCHAR(20) UNIQUE NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    publisher_id INT NOT NULL,
+    publication_year INT,
+    edition VARCHAR(20),
+    category_id INT NOT NULL,
+    total_copies INT NOT NULL DEFAULT 1,
+    available_copies INT NOT NULL DEFAULT 1,
+    shelf_location VARCHAR(50),
+    FOREIGN KEY (publisher_id) REFERENCES publishers(publisher_id),
+    FOREIGN KEY (category_id) REFERENCES book_categories(category_id),
+    CONSTRAINT chk_copies CHECK (available_copies <= total_copies AND total_copies >= 0)
+);
+
+-- 6. BOOK_AUTHORS (M-M Relationship between Books and Authors)
+CREATE TABLE book_authors (
+    book_id INT NOT NULL,
+    author_id INT NOT NULL,
+    PRIMARY KEY (book_id, author_id),
+    FOREIGN KEY (book_id) REFERENCES books(book_id) ON DELETE CASCADE,
+    FOREIGN KEY (author_id) REFERENCES authors(author_id) ON DELETE CASCADE
+);
+
+-- 7. LOANS TABLE
+CREATE TABLE loans (
+    loan_id INT AUTO_INCREMENT PRIMARY KEY,
+    book_id INT NOT NULL,
+    member_id INT NOT NULL,
+    loan_date DATE NOT NULL,
+    due_date DATE NOT NULL,
+    return_date DATE,
+    status ENUM('Active', 'Returned', 'Overdue') DEFAULT 'Active',
+    late_fee DECIMAL(10,2) DEFAULT 0.00,
+    FOREIGN KEY (book_id) REFERENCES books(book_id),
+    FOREIGN KEY (member_id) REFERENCES members(member_id),
+    CONSTRAINT chk_due_date CHECK (due_date > loan_date),
+    CONSTRAINT chk_return_date CHECK (return_date IS NULL OR return_date >= loan_date)
+);
+
+-- 8. RESERVATIONS TABLE
+CREATE TABLE reservations (
+    reservation_id INT AUTO_INCREMENT PRIMARY KEY,
+    book_id INT NOT NULL,
+    member_id INT NOT NULL,
+    reservation_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expiry_date DATETIME NOT NULL,
+    status ENUM('Pending', 'Fulfilled', 'Cancelled', 'Expired') DEFAULT 'Pending',
+    FOREIGN KEY (book_id) REFERENCES books(book_id),
+    FOREIGN KEY (member_id) REFERENCES members(member_id),
+    CONSTRAINT chk_reservation_expiry CHECK (expiry_date > reservation_date)
+);
+
+-- 9. FINE_PAYMENTS TABLE
+CREATE TABLE fine_payments (
+    payment_id INT AUTO_INCREMENT PRIMARY KEY,
+    member_id INT NOT NULL,
+    payment_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    amount DECIMAL(10,2) NOT NULL,
+    payment_method ENUM('Cash', 'Credit Card', 'Debit Card', 'Online') NOT NULL,
+    loan_id INT,
+    description TEXT,
+    FOREIGN KEY (member_id) REFERENCES members(member_id),
+    FOREIGN KEY (loan_id) REFERENCES loans(loan_id)
+);
+
+-- 10. STAFF TABLE
+CREATE TABLE staff (
+    staff_id INT AUTO_INCREMENT PRIMARY KEY,
+    first_name VARCHAR(50) NOT NULL,
+    last_name VARCHAR(50) NOT NULL,
+    email VARCHAR(100) UNIQUE NOT NULL,
+    phone VARCHAR(20),
+    position VARCHAR(50) NOT NULL,
+    hire_date DATE NOT NULL,
+    salary DECIMAL(10,2),
+    access_level ENUM('Admin', 'Librarian', 'Assistant') NOT NULL
+);
+
+-- Create indexes for performance optimization
+CREATE INDEX idx_books_title ON books(title);
+CREATE INDEX idx_members_email ON members(email);
+CREATE INDEX idx_loans_member ON loans(member_id);
+CREATE INDEX idx_loans_book ON loans(book_id);
+CREATE INDEX idx_loans_status ON loans(status);
+CREATE INDEX idx_reservations_status ON reservations(status);
+
+-- Create triggers for automatic updates
+
+-- Trigger to update available copies when a book is loaned
+DELIMITER //
+CREATE TRIGGER after_loan_insert
+AFTER INSERT ON loans
+FOR EACH ROW
+BEGIN
+    UPDATE books 
+    SET available_copies = available_copies - 1 
+    WHERE book_id = NEW.book_id;
+END//
+DELIMITER ;
+
+-- Trigger to update available copies when a book is returned
+DELIMITER //
+CREATE TRIGGER after_loan_update
+AFTER UPDATE ON loans
+FOR EACH ROW
+BEGIN
+    IF NEW.return_date IS NOT NULL AND OLD.return_date IS NULL THEN
+        UPDATE books 
+        SET available_copies = available_copies + 1 
+        WHERE book_id = NEW.book_id;
+    END IF;
+END//
+DELIMITER ;
+
+-- Trigger to update loan status to Overdue when due date passes
+DELIMITER //
+CREATE TRIGGER check_overdue_loans
+BEFORE UPDATE ON loans
+FOR EACH ROW
+BEGIN
+    IF NEW.status = 'Active' AND NEW.due_date < CURDATE() THEN
+        SET NEW.status = 'Overdue';
+    END IF;
+END//
+DELIMITER ;
+
+-- Sample data insertion (optional)
+-- INSERT INTO publishers, authors, categories, etc.
