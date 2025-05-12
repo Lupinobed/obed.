@@ -1,7 +1,6 @@
 -- Library Management System Database
 -- Created by [obed magori ]
 -- Date: [12/05/2025]
-
 -- Create database
 CREATE DATABASE library_management;
 USE library_management;
