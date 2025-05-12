@@ -1,8 +1,9 @@
 -- Library Management System Database
--- Created by [obed magori ]
+-- Created by [obed magori]
 -- Date: [12/05/2025]
+
 -- Create database
-CREATE DATABASE library_management;
+CREATE DATABASE IF NOT EXISTS library_management;
 USE library_management;
 
 -- 1. MEMBERS TABLE
@@ -17,7 +18,7 @@ CREATE TABLE members (
     membership_expiry DATE NOT NULL,
     status ENUM('Active', 'Inactive', 'Suspended') DEFAULT 'Active',
     CONSTRAINT chk_expiry CHECK (membership_expiry > membership_date)
-);
+) ENGINE=InnoDB;
 
 -- 2. AUTHORS TABLE
 CREATE TABLE authors (
@@ -28,7 +29,7 @@ CREATE TABLE authors (
     birth_date DATE,
     death_date DATE,
     CONSTRAINT chk_dates CHECK (death_date IS NULL OR birth_date < death_date)
-);
+) ENGINE=InnoDB;
 
 -- 3. PUBLISHERS TABLE
 CREATE TABLE publishers (
@@ -38,14 +39,14 @@ CREATE TABLE publishers (
     contact_email VARCHAR(100),
     contact_phone VARCHAR(20),
     website VARCHAR(255)
-);
+) ENGINE=InnoDB;
 
 -- 4. BOOK_CATEGORIES TABLE
 CREATE TABLE book_categories (
     category_id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(50) UNIQUE NOT NULL,
     description TEXT
-);
+) ENGINE=InnoDB;
 
 -- 5. BOOKS TABLE
 CREATE TABLE books (
@@ -59,10 +60,11 @@ CREATE TABLE books (
     total_copies INT NOT NULL DEFAULT 1,
     available_copies INT NOT NULL DEFAULT 1,
     shelf_location VARCHAR(50),
-    FOREIGN KEY (publisher_id) REFERENCES publishers(publisher_id),
-    FOREIGN KEY (category_id) REFERENCES book_categories(category_id),
-    CONSTRAINT chk_copies CHECK (available_copies <= total_copies AND total_copies >= 0)
-);
+    FOREIGN KEY (publisher_id) REFERENCES publishers(publisher_id) ON DELETE RESTRICT,
+    FOREIGN KEY (category_id) REFERENCES book_categories(category_id) ON DELETE RESTRICT,
+    CONSTRAINT chk_copies CHECK (available_copies <= total_copies AND total_copies >= 0 AND available_copies >= 0),
+    CONSTRAINT chk_publication_year CHECK (publication_year IS NULL OR publication_year <= YEAR(CURRENT_DATE))
+) ENGINE=InnoDB;
 
 -- 6. BOOK_AUTHORS (M-M Relationship between Books and Authors)
 CREATE TABLE book_authors (
@@ -71,23 +73,24 @@ CREATE TABLE book_authors (
     PRIMARY KEY (book_id, author_id),
     FOREIGN KEY (book_id) REFERENCES books(book_id) ON DELETE CASCADE,
     FOREIGN KEY (author_id) REFERENCES authors(author_id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB;
 
 -- 7. LOANS TABLE
 CREATE TABLE loans (
     loan_id INT AUTO_INCREMENT PRIMARY KEY,
     book_id INT NOT NULL,
     member_id INT NOT NULL,
-    loan_date DATE NOT NULL,
+    loan_date DATE NOT NULL DEFAULT (CURRENT_DATE),
     due_date DATE NOT NULL,
     return_date DATE,
-    status ENUM('Active', 'Returned', 'Overdue') DEFAULT 'Active',
+    status ENUM('Active', 'Returned', 'Overdue', 'Lost') DEFAULT 'Active',
     late_fee DECIMAL(10,2) DEFAULT 0.00,
-    FOREIGN KEY (book_id) REFERENCES books(book_id),
-    FOREIGN KEY (member_id) REFERENCES members(member_id),
+    FOREIGN KEY (book_id) REFERENCES books(book_id) ON DELETE RESTRICT,
+    FOREIGN KEY (member_id) REFERENCES members(member_id) ON DELETE RESTRICT,
     CONSTRAINT chk_due_date CHECK (due_date > loan_date),
-    CONSTRAINT chk_return_date CHECK (return_date IS NULL OR return_date >= loan_date)
-);
+    CONSTRAINT chk_return_date CHECK (return_date IS NULL OR return_date >= loan_date),
+    CONSTRAINT chk_late_fee CHECK (late_fee >= 0)
+) ENGINE=InnoDB;
 
 -- 8. RESERVATIONS TABLE
 CREATE TABLE reservations (
@@ -97,10 +100,10 @@ CREATE TABLE reservations (
     reservation_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expiry_date DATETIME NOT NULL,
     status ENUM('Pending', 'Fulfilled', 'Cancelled', 'Expired') DEFAULT 'Pending',
-    FOREIGN KEY (book_id) REFERENCES books(book_id),
-    FOREIGN KEY (member_id) REFERENCES members(member_id),
+    FOREIGN KEY (book_id) REFERENCES books(book_id) ON DELETE CASCADE,
+    FOREIGN KEY (member_id) REFERENCES members(member_id) ON DELETE CASCADE,
     CONSTRAINT chk_reservation_expiry CHECK (expiry_date > reservation_date)
-);
+) ENGINE=InnoDB;
 
 -- 9. FINE_PAYMENTS TABLE
 CREATE TABLE fine_payments (
@@ -108,12 +111,13 @@ CREATE TABLE fine_payments (
     member_id INT NOT NULL,
     payment_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     amount DECIMAL(10,2) NOT NULL,
-    payment_method ENUM('Cash', 'Credit Card', 'Debit Card', 'Online') NOT NULL,
+    payment_method ENUM('Cash', 'Credit Card', 'Debit Card', 'Online', 'Other') NOT NULL,
     loan_id INT,
     description TEXT,
-    FOREIGN KEY (member_id) REFERENCES members(member_id),
-    FOREIGN KEY (loan_id) REFERENCES loans(loan_id)
-);
+    FOREIGN KEY (member_id) REFERENCES members(member_id) ON DELETE RESTRICT,
+    FOREIGN KEY (loan_id) REFERENCES loans(loan_id) ON DELETE SET NULL,
+    CONSTRAINT chk_amount CHECK (amount > 0)
+) ENGINE=InnoDB;
 
 -- 10. STAFF TABLE
 CREATE TABLE staff (
@@ -125,8 +129,9 @@ CREATE TABLE staff (
     position VARCHAR(50) NOT NULL,
     hire_date DATE NOT NULL,
     salary DECIMAL(10,2),
-    access_level ENUM('Admin', 'Librarian', 'Assistant') NOT NULL
-);
+    access_level ENUM('Admin', 'Librarian', 'Assistant') NOT NULL,
+    CONSTRAINT chk_salary CHECK (salary >= 0)
+) ENGINE=InnoDB;
 
 -- Create indexes for performance optimization
 CREATE INDEX idx_books_title ON books(title);
@@ -135,6 +140,8 @@ CREATE INDEX idx_loans_member ON loans(member_id);
 CREATE INDEX idx_loans_book ON loans(book_id);
 CREATE INDEX idx_loans_status ON loans(status);
 CREATE INDEX idx_reservations_status ON reservations(status);
+CREATE INDEX idx_books_isbn ON books(isbn);
+CREATE INDEX idx_authors_name ON authors(name);
 
 -- Create triggers for automatic updates
 
@@ -147,6 +154,13 @@ BEGIN
     UPDATE books 
     SET available_copies = available_copies - 1 
     WHERE book_id = NEW.book_id;
+    
+    -- Update any pending reservations for this book/member to fulfilled
+    UPDATE reservations
+    SET status = 'Fulfilled'
+    WHERE book_id = NEW.book_id 
+    AND member_id = NEW.member_id
+    AND status = 'Pending';
 END//
 DELIMITER ;
 
@@ -170,8 +184,39 @@ CREATE TRIGGER check_overdue_loans
 BEFORE UPDATE ON loans
 FOR EACH ROW
 BEGIN
-    IF NEW.status = 'Active' AND NEW.due_date < CURDATE() THEN
+    IF NEW.status = 'Active' AND NEW.due_date < CURDATE() AND NEW.return_date IS NULL THEN
         SET NEW.status = 'Overdue';
+    END IF;
+END//
+DELIMITER ;
+
+-- Trigger to prevent loan if no copies available
+DELIMITER //
+CREATE TRIGGER before_loan_insert
+BEFORE INSERT ON loans
+FOR EACH ROW
+BEGIN
+    DECLARE copies_available INT;
+    
+    SELECT available_copies INTO copies_available
+    FROM books
+    WHERE book_id = NEW.book_id;
+    
+    IF copies_available <= 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Cannot loan book - no available copies';
+    END IF;
+END//
+DELIMITER ;
+
+-- Trigger to update reservation status when expired
+DELIMITER //
+CREATE TRIGGER check_reservation_expiry
+BEFORE UPDATE ON reservations
+FOR EACH ROW
+BEGIN
+    IF NEW.status = 'Pending' AND NEW.expiry_date < NOW() THEN
+        SET NEW.status = 'Expired';
     END IF;
 END//
 DELIMITER ;
